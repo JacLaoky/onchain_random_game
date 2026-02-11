@@ -347,6 +347,34 @@ const handleDraw = async () => {
   }
 };
 
+const handleRefund = async () => {
+    try {
+      setLoading(true);
+      await ensureNetwork(); // 确保连上了正确的网络
+      const contract = await getContract(true); // 获取带签名的合约实例
+      
+      const currentLotteryId = Number(lotteryId || 0); // 获取输入框里的 ID
+      
+      console.log(`正在申请 Lottery #${currentLotteryId} 的退款...`);
+      
+      // 调用合约的 claimRefund 函数
+      const tx = await contract.claimRefund(currentLotteryId);
+      setMessage("Refund transaction sent. Waiting for confirmation...");
+      
+      await tx.wait(); // 等待交易上链
+      
+      setMessage(`Refund successful! Check your wallet balance.`);
+      await refreshStatus(); // 刷新余额显示
+    } catch (err) {
+      console.error(err);
+      // 提取错误信息，比如 "Refund not active yet"
+      const errorMsg = err.reason || err.message || "Refund failed."; 
+      setMessage("Error: " + errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!provider) return;
     provider.getNetwork().then((network) => {
@@ -526,6 +554,9 @@ const handleDraw = async () => {
             </button>
             <button className="btn btn-ghost" onClick={handleDraw} disabled={loading}>
               Request Draw
+            </button>
+            <button className="btn btn-secondary" onClick={handleRefund} disabled={loading} style={{ borderColor: '#e35050', color: '#e35050' }}>
+              Claim Refund
             </button>
           </div>
           <p className="helper">Make sure lottery is active before buying.</p>

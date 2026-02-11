@@ -61,6 +61,7 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
         bool drawn;
         uint256 requestId;
         address[] entries;
+        mapping(address => uint256) userTicketCounts;
     }
 
     /// @notice Dice bet data.
@@ -138,6 +139,9 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
         uint256 endTime
     );
 
+    /// @notice Emitted when a player claims a refund for an expired lottery.
+    event RefundClaimed(uint256 indexed lotteryId, address indexed player, uint256 amount);
+
     /// @notice Emitted when tickets are purchased.
     event TicketsPurchased(uint256 indexed lotteryId, address indexed buyer, uint256 count, uint256 cost);
 
@@ -145,7 +149,7 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
     event LotteryDrawRequested(uint256 indexed lotteryId, uint256 indexed requestId);
 
     /// @notice Emitted when a lottery is drawn.
-    event LotteryDrawn(uint256 indexed lotteryId, address indexed winner, uint256 pot, uint256 randomWord);
+    event LotteryDrawn(uint256 indexed lotteryId, address indexed winner, uint256 payout, uint256 fee, uint256 randomWord);
 
     /// @notice Emitted when a dice bet is placed.
     event DicePlayed(
@@ -281,6 +285,9 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
         // Effects
         lot.pot += cost;
         lockedFunds[lot.token] += cost;
+
+        lot.userTicketCounts[msg.sender] += count;
+
         for (uint256 i = 0; i < count; i++) {
             lot.entries.push(msg.sender);
         }
@@ -482,6 +489,41 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
         return lotteries[lotteryId].entries.length;
     }
 
+    // 定义超时阈值
+    uint256 public constant REFUND_DELAY = 30 seconds;
+
+    /**
+    * @notice 如果超过阈值未开奖，玩家可申请退款
+    * @param lotteryId 彩票 ID
+    */
+    function claimRefund(uint256 lotteryId) external nonReentrant {
+        Lottery storage lot = lotteries[lotteryId];
+
+        // 1. 检查是否满足退款条件
+        require(block.timestamp > lot.endTime + REFUND_DELAY, "Refund not active yet"); // 必须超时
+        require(!lot.drawn, "Already drawn"); // 必须未开奖
+        
+        // 2. 检查用户是否有余额
+        uint256 ticketCount = lot.userTicketCounts[msg.sender];
+        require(ticketCount > 0, "No tickets to refund");
+
+        // 3. 计算退款金额
+        uint256 refundAmount = ticketCount * lot.ticketPrice;
+
+        // 4. 更新状态 (Effects)
+        lot.userTicketCounts[msg.sender] = 0; // 清零，防止重入或多次退款
+        lot.pot -= refundAmount; // 从奖池扣除
+        
+        // 关键步骤：解除资金锁定
+        // 这一步至关重要，否则这笔钱永远会被认为是 "locked"，管理员无法通过 withdraw 提取剩余资金
+        lockedFunds[lot.token] -= refundAmount; 
+
+        // 5. 转账 (Interactions)
+        _payout(lot.token, msg.sender, refundAmount); //
+
+        emit RefundClaimed(lotteryId, msg.sender, refundAmount); // 需定义新事件
+    }
+
     /**
      * @notice Get a lottery entry by index.
      * @param lotteryId Lottery id.
@@ -529,15 +571,19 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
         address winner = lot.entries[winnerIndex];
         uint256 pot = lot.pot;
 
+        uint256 fee = (pot * houseEdgeBps) / BPS_DENOMINATOR;
+
+        uint256 payout = pot - fee;
+
         // Effects
         lot.winner = winner;
         lot.drawn = true;
         lockedFunds[lot.token] -= pot;
 
         // Interactions
-        _payout(lot.token, winner, pot);
+        _payout(lot.token, winner, payout);
 
-        emit LotteryDrawn(lotteryId, winner, pot, randomWord);
+        emit LotteryDrawn(lotteryId, winner, payout, fee, randomWord);
     }
 
     function _resolveDice(uint256 diceId, uint256 randomWord) internal {
