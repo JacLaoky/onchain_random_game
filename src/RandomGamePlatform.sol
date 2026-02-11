@@ -568,6 +568,52 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
         emit Funded(msg.sender, address(0), msg.value);
     }
 
+    /**
+     * @notice Get all "stuck" dice bet IDs for a user (unresolved + belonging to the user)
+     * @dev calling it from the frontend does not consume gas.
+     */
+    function getUserRefundableDiceBets(address user) external view returns (uint256[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < nextDiceId; i++) {
+            if (diceBets[i].player == user && !diceBets[i].resolved) {
+                count++;
+            }
+        }
+    
+        uint256[] memory ids = new uint256[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < nextDiceId; i++) {
+            if (diceBets[i].player == user && !diceBets[i].resolved) {
+                ids[index] = i;
+                index++;
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * @notice Get all IDs of lotteries that the user has participated in and have not yet been drawn.
+     */
+    function getUserActiveLotteries(address user) external view returns (uint256[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < nextLotteryId; i++) {
+            // Check if the user has purchased tickets and the lottery has not been drawn yet
+            if (lotteries[i].userTicketCounts[user] > 0 && !lotteries[i].drawn) {
+                count++;
+            }
+        }
+
+        uint256[] memory ids = new uint256[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < nextLotteryId; i++) {
+            if (lotteries[i].userTicketCounts[user] > 0 && !lotteries[i].drawn) {
+                ids[index] = i;
+                index++;
+            }
+        }
+        return ids;
+    }
+
     // -------------------------
     // Internal helpers
     // -------------------------

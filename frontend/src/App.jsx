@@ -41,6 +41,8 @@ export default function App() {
   const [lotteryCount, setLotteryCount] = useState("1");
   const [lotteryId, setLotteryId] = useState("0");
 
+  const [foundIds, setFoundIds] = useState([]);
+
   const provider = useMemo(() => {
     if (!window.ethereum) return null;
     return new BrowserProvider(window.ethereum);
@@ -210,7 +212,7 @@ const handlePlayDice = async () => {
     );
     const receipt1 = await tx1.wait();
 
-    console.log("Bet Success！Now waiting...");
+    console.log("Bet Success! Now waiting...");
     setMessage("Bet placed. Waiting for VRF result...");
 
     const provider = new BrowserProvider(window.ethereum);
@@ -220,7 +222,7 @@ const handlePlayDice = async () => {
     const nextDiceId = await contract.nextDiceId();
     const currentRequestId = (await contract.diceBets(Number(nextDiceId) - 1)).requestId;
 
-    console.log("2. Transacting... RequestID:", currentRequestId);
+    console.log("Transacting... RequestID:", currentRequestId);
     const tx2 = await mockContract.fulfillRandomWordsWithOverride(
        currentRequestId,
        APP_CONFIG.contractAddress,
@@ -233,9 +235,9 @@ const handlePlayDice = async () => {
 
     setMessage("VRF Callback received! You " + "won/lost check UI");
     await refreshStatus();
-console.log("2. Comfirming...");
+console.log("Comfirming...");
 const receipt2 = await tx2.wait();
-console.log("Comfirming success！");
+console.log("Comfirming success! ");
 
 const currentDiceId = Number(await contract.nextDiceId()) - 1;
 const betResult = await contract.diceBets(currentDiceId);
@@ -245,9 +247,9 @@ const rollNumber = betResult[7];
 
 // Update UI notifications
 if (isWin) {
-    setMessage(`congratulations！You win！Dice point is: ${rollNumber} (Less than ${diceRollUnder})`);
+    setMessage(`congratulations! You win! Dice point is: ${rollNumber} (Less than ${diceRollUnder})`);
 } else {
-    setMessage(`Oh no！You lose. Dice point is: ${rollNumber} (Need less than ${diceRollUnder})`);
+    setMessage(`Oh no! You lose. Dice point is: ${rollNumber} (Need less than ${diceRollUnder})`);
 }
 
 await refreshStatus();
@@ -345,6 +347,36 @@ const handleDraw = async () => {
     console.error(err);
     const errorMsg = err.reason || err.message || "Draw request failed.";
     setMessage("Error: " + errorMsg);
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleFindIds = async () => {
+  try {
+    setLoading(true);
+    const contract = await getContract();
+    const account = status.account;
+
+    let ids = [];
+    if (refundType === "dice") {
+        ids = await contract.getUserRefundableDiceBets(account);
+    } else {
+        ids = await contract.getUserActiveLotteries(account);
+    }
+
+    // Convert BigInt to Number
+    const formattedIds = ids.map(id => id.toString());
+    setFoundIds(formattedIds);
+
+    if (formattedIds.length === 0) {
+        setMessage("No stuck IDs found for this category.");
+    } else {
+        setMessage(`Found ${formattedIds.length} ID(s). Click one to fill.`);
+    }
+  } catch (err) {
+    console.error(err);
+    setMessage("Failed to find IDs.");
   } finally {
     setLoading(false);
   }
@@ -574,7 +606,7 @@ const handleUnifiedRefund = async () => {
 
       <div className="panel" style={{ border: "1px solid #e35050" }}>
           <h3 style={{ color: "#c44536", display: "flex", alignItems: "center", gap: "8px" }}>
-            <span>⚠️</span> Refund Center
+            Refund Center
           </h3>
           
           <div className="field">
@@ -582,18 +614,43 @@ const handleUnifiedRefund = async () => {
             <div style={{ display: "flex", gap: "10px" }}>
               <label style={{ display: "flex", alignItems: "center", cursor: "pointer", textTransform: "none", color: "var(--ink)" }}>
                 <input type="radio" name="refundType" value="dice" checked={refundType === "dice"}
-                  onChange={(e) => setRefundType(e.target.value)}
+                  onChange={(e) => {
+                    setRefundType(e.target.value);
+                    setRefundId(""); 
+                    setFoundIds([]);
+                  }}
                   style={{ marginRight: "6px" }}
                 />
                 Stuck Dice Bet (over 24h)
               </label>
               <label style={{ display: "flex", alignItems: "center", cursor: "pointer", textTransform: "none", color: "var(--ink)" }}>
                 <input type="radio" name="refundType" value="lottery" checked={refundType === "lottery"}
-                  onChange={(e) => setRefundType(e.target.value)}
+                  onChange={(e) => {
+                    setRefundType(e.target.value);
+                    setRefundId(""); 
+                    setFoundIds([]);
+                  }}
                   style={{ marginRight: "6px" }}
                 />
-                Expired Lottery (over End+30s)
+                Expired Lottery (over 7days)
               </label>
+            </div>
+            <div style={{ marginBottom: "12px", padding: "10px", background: "#fff5f5", borderRadius: "8px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "12px", color: "#c44536" }}>Forgot ID?</span>
+                  <button className="btn btn-ghost" onClick={handleFindIds} style={{ fontSize: "12px", padding: "4px 8px", height: "auto" }}>
+                      🔍 Find My IDs
+                  </button>
+              </div>
+            {foundIds.length > 0 && (
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      {foundIds.map(id => (
+                          <span key={id} onClick={() => setRefundId(id)} style={{background: "#c44536", color: "white", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", cursor: "pointer"}}>
+                              #{id}
+                          </span>
+                      ))}
+                  </div>
+              )}
             </div>
           </div>
 
@@ -623,6 +680,6 @@ const handleUnifiedRefund = async () => {
       <footer className="footer">
         Built for Sepolia testing. Keep contract funded to cover payouts.
       </footer>
-    </div>
+     </div>
   );
 }
