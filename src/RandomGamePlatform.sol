@@ -123,6 +123,8 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
 
     /// @notice VRF request mapping to game.
     mapping(uint256 => RequestInfo) public requests;
+    
+    mapping(uint256 => uint256) public diceBetTimestamps;
 
     /// @notice Next lottery id.
     uint256 public nextLotteryId;
@@ -336,6 +338,7 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
         require(_canLock(token, stake, potentialPayout), "insufficient liquidity");
 
         uint256 diceId = nextDiceId++;
+        diceBetTimestamps[diceId] = block.timestamp;
 
         // Effects
         diceBets[diceId] = DiceBet({
@@ -489,39 +492,53 @@ contract RandomGamePlatform is VRFConsumerBaseV2Plus, ReentrancyGuard {
         return lotteries[lotteryId].entries.length;
     }
 
-    // 定义超时阈值
-    uint256 public constant REFUND_DELAY = 30 seconds;
+    // Define timeout threshold
+    uint256 public constant REFUND_DELAY = 7 days;
+
+    function refundStuckDiceBet(uint256 diceId) external nonReentrant {
+        DiceBet storage bet = diceBets[diceId];
+        require(bet.player == msg.sender, "Not your bet");
+        require(!bet.resolved, "Already resolved");
+        // Allow refund if result is not revealed after 24 hours
+        require(block.timestamp > diceBetTimestamps[diceId] + 1 days, "Wait for VRF");
+
+        // Update state
+        bet.resolved = true; 
+        
+        // Unlock funds and refund the stake
+        lockedFunds[bet.token] -= bet.potentialPayout; 
+        _payout(bet.token, bet.player, bet.stake);
+    }
 
     /**
-    * @notice 如果超过阈值未开奖，玩家可申请退款
-    * @param lotteryId 彩票 ID
+    * @notice Players can claim a refund if the lottery is not drawn after the threshold
+    * @param lotteryId Lottery ID
     */
     function claimRefund(uint256 lotteryId) external nonReentrant {
         Lottery storage lot = lotteries[lotteryId];
 
-        // 1. 检查是否满足退款条件
-        require(block.timestamp > lot.endTime + REFUND_DELAY, "Refund not active yet"); // 必须超时
-        require(!lot.drawn, "Already drawn"); // 必须未开奖
+        // Check refund conditions
+        require(block.timestamp > lot.endTime + REFUND_DELAY, "Refund not active yet"); // Must be past the timeout
+        require(!lot.drawn, "Already drawn"); // Must not be drawn yet
         
-        // 2. 检查用户是否有余额
+        // Check user balance
         uint256 ticketCount = lot.userTicketCounts[msg.sender];
         require(ticketCount > 0, "No tickets to refund");
 
-        // 3. 计算退款金额
+        // Calculate refund amount
         uint256 refundAmount = ticketCount * lot.ticketPrice;
 
-        // 4. 更新状态 (Effects)
-        lot.userTicketCounts[msg.sender] = 0; // 清零，防止重入或多次退款
-        lot.pot -= refundAmount; // 从奖池扣除
+        // Update state (Effects)
+        lot.userTicketCounts[msg.sender] = 0; // Prevent reentrancy or double refunds
+        lot.pot -= refundAmount; // Deduct from pot
         
-        // 关键步骤：解除资金锁定
-        // 这一步至关重要，否则这笔钱永远会被认为是 "locked"，管理员无法通过 withdraw 提取剩余资金
+        // Unlock funds
         lockedFunds[lot.token] -= refundAmount; 
 
-        // 5. 转账 (Interactions)
-        _payout(lot.token, msg.sender, refundAmount); //
+        // Transfer (Interactions)
+        _payout(lot.token, msg.sender, refundAmount);
 
-        emit RefundClaimed(lotteryId, msg.sender, refundAmount); // 需定义新事件
+        emit RefundClaimed(lotteryId, msg.sender, refundAmount);
     }
 
     /**

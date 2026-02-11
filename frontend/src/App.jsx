@@ -31,6 +31,9 @@ export default function App() {
   const [diceStake, setDiceStake] = useState("0.0001");
   const [diceRollUnder, setDiceRollUnder] = useState("50");
   const [dicePayout, setDicePayout] = useState("-");
+  
+  const [refundType, setRefundType] = useState("dice");
+  const [refundId, setRefundId] = useState("");
 
   const [lotteryTicketPrice, setLotteryTicketPrice] = useState("0.0001");
   const [lotteryStartDelay, setLotteryStartDelay] = useState("60");
@@ -113,7 +116,7 @@ export default function App() {
       const network = await provider.getNetwork();
       if (Number(network.chainId) !== APP_CONFIG.chainId) {
         try {
-          // 尝试自动切换到本地网络
+          // Attempt to automatically switch to local network
           await window.ethereum.request({
             method: "wallet_switchEthereumChain",
             params: [{ chainId: "0x7a69" }],
@@ -240,7 +243,7 @@ const betResult = await contract.diceBets(currentDiceId);
 const isWin = betResult[6];
 const rollNumber = betResult[7];
 
-// 4. 更新 UI 提示
+// Update UI notifications
 if (isWin) {
     setMessage(`congratulations！You win！Dice point is: ${rollNumber} (Less than ${diceRollUnder})`);
 } else {
@@ -308,19 +311,19 @@ const handleDraw = async () => {
 
     const currentLotteryId = Number(lotteryId || 0);
 
-    console.log(`1. 请求开奖 Lottery #${currentLotteryId}...`);
+    console.log(`Requesting draw for Lottery... #${currentLotteryId}...`);
     const tx1 = await contract.requestLotteryDraw(currentLotteryId);
     await tx1.wait();
-    console.log("请求已上链！正在获取 Request ID...");
+    console.log("Request on-chain! Fetching Request ID...");
 
     const lotteryInfo = await contract.lotteries(currentLotteryId);
 
     const requestId = lotteryInfo[8];
-    console.log("获取到 Request ID:", requestId.toString());
+    console.log("Obtained Request ID:", requestId.toString());
 
     setMessage("Draw requested. Triggering VRF callback...");
 
-    console.log("2. 触发 Mock 开奖交易...");
+    console.log("Triggering Mock draw transaction...");
     const tx2 = await mockContract.fulfillRandomWordsWithOverride(
       requestId,
       APP_CONFIG.contractAddress,
@@ -328,13 +331,13 @@ const handleDraw = async () => {
       { gasLimit: 500000 } //
     );
     await tx2.wait();
-    console.log("Mock 回调成功！");
+    console.log("Mock callback successful!");
 
     const updatedLotteryInfo = await contract.lotteries(currentLotteryId);
     const winner = updatedLotteryInfo[5];
     const pot = formatEther(updatedLotteryInfo[4]);
 
-    setMessage(`🎉 开奖完成！中奖者: ${winner.slice(0, 6)}...${winner.slice(-4)} 奖池: ${pot} ETH`);
+    setMessage(`🎉 Draw Complete! Winner: ${winner.slice(0, 6)}...${winner.slice(-4)} pot: ${pot} ETH`);
 
     await refreshStatus();
 
@@ -347,28 +350,37 @@ const handleDraw = async () => {
   }
 };
 
-const handleRefund = async () => {
+const handleUnifiedRefund = async () => {
+    if (!refundId) {
+      setMessage("Error: Please enter an ID.");
+      return;
+    }
+
     try {
       setLoading(true);
-      await ensureNetwork(); // 确保连上了正确的网络
-      const contract = await getContract(true); // 获取带签名的合约实例
-      
-      const currentLotteryId = Number(lotteryId || 0); // 获取输入框里的 ID
-      
-      console.log(`正在申请 Lottery #${currentLotteryId} 的退款...`);
-      
-      // 调用合约的 claimRefund 函数
-      const tx = await contract.claimRefund(currentLotteryId);
-      setMessage("Refund transaction sent. Waiting for confirmation...");
-      
-      await tx.wait(); // 等待交易上链
-      
-      setMessage(`Refund successful! Check your wallet balance.`);
-      await refreshStatus(); // 刷新余额显示
+      await ensureNetwork();
+      const contract = await getContract(true);
+
+      if (refundType === "dice") {
+        // Dice refund
+        console.log(`Refunding Stuck Dice #${refundId}...`);
+        const tx = await contract.refundStuckDiceBet(refundId);
+        setMessage("Dice refund tx sent. Waiting...");
+        await tx.wait();
+        setMessage(`Success! Dice #${refundId} refunded.`);
+      } else {
+        // Lottery refund
+        console.log(`Refunding Expired Lottery #${refundId}...`);
+        const tx = await contract.claimRefund(refundId);
+        setMessage("Lottery refund tx sent. Waiting...");
+        await tx.wait();
+        setMessage(`Success! Lottery #${refundId} refunded.`);
+      }
+
+      await refreshStatus(); // Refresh balances
     } catch (err) {
       console.error(err);
-      // 提取错误信息，比如 "Refund not active yet"
-      const errorMsg = err.reason || err.message || "Refund failed."; 
+      const errorMsg = err.reason || err.message || "Refund failed.";
       setMessage("Error: " + errorMsg);
     } finally {
       setLoading(false);
@@ -555,13 +567,56 @@ const handleRefund = async () => {
             <button className="btn btn-ghost" onClick={handleDraw} disabled={loading}>
               Request Draw
             </button>
-            <button className="btn btn-secondary" onClick={handleRefund} disabled={loading} style={{ borderColor: '#e35050', color: '#e35050' }}>
-              Claim Refund
-            </button>
           </div>
           <p className="helper">Make sure lottery is active before buying.</p>
         </div>
       </section>
+
+      <div className="panel" style={{ border: "1px solid #e35050" }}>
+          <h3 style={{ color: "#c44536", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span>⚠️</span> Refund Center
+          </h3>
+          
+          <div className="field">
+            <label>Refund Type</label>
+            <div style={{ display: "flex", gap: "10px" }}>
+              <label style={{ display: "flex", alignItems: "center", cursor: "pointer", textTransform: "none", color: "var(--ink)" }}>
+                <input type="radio" name="refundType" value="dice" checked={refundType === "dice"}
+                  onChange={(e) => setRefundType(e.target.value)}
+                  style={{ marginRight: "6px" }}
+                />
+                Stuck Dice Bet (over 24h)
+              </label>
+              <label style={{ display: "flex", alignItems: "center", cursor: "pointer", textTransform: "none", color: "var(--ink)" }}>
+                <input type="radio" name="refundType" value="lottery" checked={refundType === "lottery"}
+                  onChange={(e) => setRefundType(e.target.value)}
+                  style={{ marginRight: "6px" }}
+                />
+                Expired Lottery (over End+30s)
+              </label>
+            </div>
+          </div>
+
+          <div className="field">
+            <label>{refundType === "dice" ? "Dice ID" : "Lottery ID"}</label>
+            <input
+              type="number" value={refundId} onChange={(e) => setRefundId(e.target.value)}
+              placeholder={refundType === "dice" ? "e.g. 5" : "e.g. 1"}
+            />
+          </div>
+
+          <button className="btn btn-secondary" onClick={handleUnifiedRefund} disabled={loading}
+            style={{ borderColor: "#c44536", color: "#c44536", width: "100%" }}
+          >
+            {loading ? "Processing..." : `Refund ${refundType === "dice" ? "Dice Bet" : "Lottery Ticket"}`}
+          </button>
+
+          <p className="helper" style={{ color: "#c44536", marginTop: "10px" }}>
+            {refundType === "dice"
+              ? "* For dice bets stuck without VRF result for over 24 hours."
+              : "* For lottery rounds that ended but were never drawn."}
+          </p>
+        </div>
 
       {message && <div className="notice">{message}</div>}
 
