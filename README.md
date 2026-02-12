@@ -17,17 +17,22 @@ A Sepolia-focused, verifiably fair game platform powered by Chainlink VRF v2.5. 
   - Create a round with start/end time
   - Users buy tickets during the active window
   - Owner requests a VRF draw after end time
-  - Winner is determined on-chain via VRF
+  - Chainlink VRF selects the winner on-chain
 
 - **Dice (multiplier bet)**
   - User chooses `rollUnder` (2–99)
   - Payout scales by odds and house edge
-  - VRF determines the roll and resolves the bet
+  - VRF generates the roll result to resolve the bet
 
 ### Treasury & Risk Controls
 - Token-specific **min/max bet** limits
 - **Locked funds** tracking to prevent over-commitment
 - Explicit **funding** methods for ETH or ERC-20
+
+### Safety & Refunds
+- **Refund Center**:
+  - **Dice**: Players can reclaim funds if a bet remains unresolved for > 24 hours (e.g., VRF failure).
+  - **Lottery**: Players can claim refunds if a lottery expires without a draw (7 days post-end).
 
 ### VRF Integration
 - VRF config stored on-chain
@@ -63,11 +68,13 @@ A Sepolia-focused, verifiably fair game platform powered by Chainlink VRF v2.5. 
 - `requestLotteryDraw(uint256 lotteryId)`
 - `getLotteryEntryCount(uint256 lotteryId)`
 - `getLotteryEntry(uint256 lotteryId, uint256 index)`
+- `claimRefund(uint256 lotteryId)`
 
 ### Dice
 - `playDice(address token, uint256 stake, uint8 rollUnder)`
 - `diceBets(uint256 diceId)`
 - `calcDicePayout(uint256 stake, uint8 rollUnder)`
+- `refundStuckDiceBet(uint256 diceId)`
 
 ### Admin & Treasury
 - `setTokenConfig(address token, bool enabled, uint256 minBet, uint256 maxBet)`
@@ -117,11 +124,13 @@ setTokenConfig(
 
 ## Frontend (React)
 
-The `frontend/` folder contains a React + ethers v6 UI for:
+The `frontend/` folder contains a robust React + ethers v6 UI featuring:
 - wallet connection
 - treasury funding
 - token config
 - dice and lottery flows
+- refund center ui
+- polling updates
 
 ```bash
 cd frontend
@@ -134,6 +143,22 @@ npm run dev
 - VRF subscriptions must be funded and include the contract as a consumer.
 - Dice payouts require sufficient treasury balance to cover worst-case outcomes.
 - All amounts are in Wei unless otherwise stated.
+
+## Troubleshooting
+
+**"execution reverted" or "token disabled"**
+- **Cause**: The contract does not allow betting by default.
+- **Fix**: The owner must call `setTokenConfig` to enable ETH (address(0)) and set limits.
+
+**"missing revert data" or VRF callback hangs**
+- **Cause**: The Chainlink Subscription is unfunded or the contract is not a Consumer.
+- **Fix**:
+  - Go to VRF Subscription Manager.
+  - **Add Funds**: Ensure you have Sepolia ETH (not just LINK).
+  - **Add Consumer**: Add your deployed contract address.
+
+**Frontend shows "Network Error"**
+- **Fix**: Ensure MetaMask is switched to Sepolia (Chain ID 11155111). The UI handles this automatically in most cases.
 
 ## License
 
